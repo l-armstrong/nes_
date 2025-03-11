@@ -53,11 +53,14 @@ class CPU_6502(object):
         check_type(val, uint8)
         self.bus.write(addr, val)
     
-    def get_flag(f: FLAGS) -> uint8: ...
+    def get_flag(self, f: FLAGS) -> uint8:
+        # get status of specfic bit
+        return 1 if self.status & f > 0 else 0
 
-    def set_flag(f: FLAGS, value: bool) -> None:
+    def set_flag(self, f: FLAGS, value: bool) -> None:
         # set bits in status register depending on flag
-        ...
+        if value: self.status |= f 
+        else: self.status &= ~f
 
     # external signals
     def clock(self) -> None: 
@@ -91,8 +94,11 @@ class CPU_6502(object):
         ...
 
     def fetch(self) -> uint8:
-        # fetch data from apporpriate source
-        ...
+        # fetch data from apporpriate source that does not 
+        # have an address mode of implied.
+        if self.lookup[self.opcode].addrmode is not self.imp:
+            self.fetched = self.read(self.addr_abs)
+        return self.fetched
     
     # Adressing Modes 
     def imp(self) -> uint8: 
@@ -104,33 +110,33 @@ class CPU_6502(object):
         # the data is supplied as part of the instruction
         # its the next byte
         # all address mode set the addr abs, so the instruction know where to read data
-        self.addr_abs = self.pc
+        self.addr_abs: uint16 = self.pc
         self.pc += 1
         return 0
     def zp0(self) -> uint8: 
         # zero page addressing
-        self.addr_abs = self.read(self.pc)
+        self.addr_abs: uint16 = self.read(self.pc)
         self.pc += 1
         self.addr_abs &= 0x00FF
         return 0
     def zpx(self) -> uint8: 
         # zero page addressing w/ x register offset
         # useful for iterating through regions of memory like an array 
-        self.addr_abs = self.read(self.pc) + self.x
+        self.addr_abs: uint16 = self.read(self.pc) + self.x
         self.pc += 1
         self.addr_abs &= 0x00FF
         return 0
     def zpy(self) -> uint8:
         # zero page addressing w/ y register offset
         # useful for iterating through regions of memory like an array 
-        self.addr_abs = self.read(self.pc) + self.y
+        self.addr_abs: uint16 = self.read(self.pc) + self.y
         self.pc += 1
         self.addr_abs &= 0x00FF
         return 0
     def rel(self) -> uint8:
         # relative address mode, applies to branching instructions
         # can only jump to locations within a range of 127 memory location
-        self.addr_rel = self.read(self.pc)
+        self.addr_rel: uint16 = self.read(self.pc)
         self.pc += 1
         # check if this is a signed bit, set hi byte to all ones
         if (self.addr_rel & 0x80): self.addr_rel |= 0xFF00
@@ -141,7 +147,7 @@ class CPU_6502(object):
         self.pc += 1
         hi = self.read(self.pc)
         self.pc += 1
-        self.addr_abs = (hi << 8) | lo
+        self.addr_abs: uint16 = (hi << 8) | lo
         return 0
     def abx(self) -> uint8: 
         # specifies full address (3 byte instruction) x reg offset
@@ -149,7 +155,7 @@ class CPU_6502(object):
         self.pc += 1
         hi = self.read(self.pc)
         self.pc += 1
-        self.addr_abs = (hi << 8) | lo
+        self.addr_abs: uint16 = (hi << 8) | lo
         self.addr_abs += self.x
         # if after inc by reg x we turn to a different page
         # we need to indicate to the system we need an additional
@@ -163,7 +169,7 @@ class CPU_6502(object):
         self.pc += 1
         hi = self.read(self.pc)
         self.pc += 1
-        self.addr_abs = (hi << 8) | lo 
+        self.addr_abs: uint16 = (hi << 8) | lo 
         self.addr_abs += self.y
         # if after inc by reg y we turn to a different page
         # we need to indicate to the system we need an additional
@@ -179,8 +185,8 @@ class CPU_6502(object):
         # construct address
         ptr = (hi << 8) | lo
         # simulate page bounday hardware bug
-        if lo == 0x00FF: self.addr_abs = (self.read(ptr & 0xFF00) << 8) | self.read(ptr + 0)
-        else: self.addr_abs = (self.read(ptr + 1) << 8) | self.read(ptr + 0)
+        if lo == 0x00FF: self.addr_abs: uint16 = (self.read(ptr & 0xFF00) << 8) | self.read(ptr + 0)
+        else: self.addr_abs: uint16 = (self.read(ptr + 1) << 8) | self.read(ptr + 0)
         return 0
     def izx(self) -> uint8: 
         # indirect addressing of the zero page with x reg offset
@@ -206,10 +212,28 @@ class CPU_6502(object):
 
     # Opcodes
     def adc(self) -> uint8: ...
-    def _and(self) -> uint8: ...
+    def _and(self) -> uint8: 
+        # perform bitwise & on a reg and fetched data
+        # fetch data
+        self.fetch()
+        # perform bitwise
+        self.a = self.a & self.fetched
+        # update status flags
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        # requires additional clock cycles
+        return 1
     def asl(self) -> uint8: ...
     def bcc(self) -> uint8: ...
-    def bcs(self) -> uint8: ...
+    def bcs(self) -> uint8: 
+        # brance if carry bit is set
+        if self.get_flag(FLAGS.C) == 0x01:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
     def beq(self) -> uint8: ...
     def bit(self) -> uint8: ...
     def bmi(self) -> uint8: ...
