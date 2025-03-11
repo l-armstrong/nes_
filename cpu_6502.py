@@ -8,7 +8,7 @@ from typing import Callable, List
 @dataclass
 class Instruction:
     name:       str
-    cycle:      uint8
+    cycles:     uint8
     operate:    Callable[[], uint8]
     addrmode:   Callable[[], uint8]
 
@@ -32,7 +32,7 @@ class CPU_6502(object):
         self.status = uint8(0x00)       # status register
 
         self.fetched = uint8(0x00)      # current fetched data
-        self.addr_addr = uint16(0x0000) # can be used to read from diff location of memory.
+        self.addr_abs = uint16(0x0000)  # can be used to read from diff location of memory.
         self.addr_rel = uint16(0x0000)  # used for branching, to jump a certain amount of distance
         self.opcode = uint8(0x00)       # current opcode
         self.cycles = uint8(0x00)       # stores the number of cycles left for the current instruction.
@@ -58,17 +58,111 @@ class CPU_6502(object):
     def set_flag(f: FLAGS, value: bool) -> None:
         # set bits in status register depending on flag
         ...
+
+    # external signals
+    def clock(self) -> None: 
+        # one clock cycle to occur
+        if (self.cycles == 0):
+            # 1 byte opcode to index table
+            opcode: uint8 = self.read(self.pc)
+            # increase pc after reading
+            self.pc += 1
+            # get current number of cycles required
+            self.cycles = self.lookup[opcode].cycles
+            # call function required for the opcodes address mode
+            more_cycles_1 = self.lookup[opcode].addrmode()
+            # call function required for the operate address mode
+            more_cycles_2 = self.lookup[opcode].operate()
+            # more_cycles_1 and more_cycles 2 return 1 or 0 if there needs to be another clock cycle
+            self.cycles += (more_cycles_1 & more_cycles_2)
+        # cycle is decremented every time the clock is called
+        self.cycles -= 1
+    # reset, irq, nmi can occur at anytime
+    # need to behave async.
+    # interrupts processor from doing what it is currently doing. 
+    # only finishing current instruction
+    def reset(self) -> None: ...
+    def irq(self) -> None:
+        # interrupt request signal
+        # can be ignored depeninding if the interrupt enable flag is set
+        ...
+    def nmi(self) -> None: 
+        # non maskable interrupt request signal
+        ...
+
+    def fetch(self) -> uint8:
+        # fetch data from apporpriate source
+        ...
     
     # Adressing Modes 
-    def imp(self) -> uint8: ...
-    def imm(self) -> uint8: ...
-    def zp0(self) -> uint8: ...
-    def zpx(self) -> uint8: ...
-    def zpy(self) -> uint8: ...
+    def imp(self) -> uint8: 
+        # could be operation on the accumulator register
+        self.fetched = self.a
+        # there are no data as part of instruction
+        return 0
+    def imm(self) -> uint8: 
+        # the data is supplied as part of the instruction
+        # its the next byte
+        # all address mode set the addr abs, so the instruction know where to read data
+        self.addr_abs = self.pc
+        self.pc += 1
+        return 0
+    def zp0(self) -> uint8: 
+        # zero page addressing
+        self.addr_abs = self.read(self.pc)
+        self.pc += 1
+        self.addr_abs &= 0x00FF
+        return 0
+    def zpx(self) -> uint8: 
+        # zero page addressing w/ x register offset
+        # useful for iterating through regions of memory like an array 
+        self.addr_abs = self.read(self.pc) + self.x
+        self.pc += 1
+        self.addr_abs &= 0x00FF
+        return 0
+    def zpy(self) -> uint8:
+        # zero page addressing w/ y register offset
+        # useful for iterating through regions of memory like an array 
+        self.addr_abs = self.read(self.pc) + self.y
+        self.pc += 1
+        self.addr_abs &= 0x00FF
+        return 0
     def rel(self) -> uint8: ...
-    def abs(self) -> uint8: ...
-    def abx(self) -> uint8: ...
-    def aby(self) -> uint8: ...
+    def abs(self) -> uint8: 
+        # specifies full address (3 byte instruction)
+        lo = self.read(self.pc)
+        self.pc += 1
+        hi = self.read(self.pc)
+        self.pc += 1
+        self.addr_abs = (hi << 8) | lo
+        return 0
+    def abx(self) -> uint8: 
+        # specifies full address (3 byte instruction) x reg offset
+        lo = self.read(self.pc)
+        self.pc += 1
+        hi = self.read(self.pc)
+        self.pc += 1
+        self.addr_abs = (hi << 8) | lo
+        self.addr_abs += self.x
+        # if after inc by reg x we turn to a different page
+        # we need to indicate to the system we need an additional
+        # clock cycle
+        # check if the hi byte has changed checking the hi byte are the same
+        return 1 if (self.addr_abs & 0xFF00) != (hi << 8) else 0
+    
+    def aby(self) -> uint8: 
+        # specifies full address (3 byte instruction) y reg offset
+        lo = self.read(self.pc)
+        self.pc += 1
+        hi = self.read(self.pc)
+        self.pc += 1
+        self.addr_abs = (hi << 8) | lo 
+        self.addr_abs += self.y
+        # if after inc by reg y we turn to a different page
+        # we need to indicate to the system we need an additional
+        # clock cycle
+        # check if the hi byte has changed checking the hi byte are the same
+        return 1 if (self.addr_abs & 0xFF00) != (hi << 8) else 0
     def ind(self) -> uint8: ...
     def izx(self) -> uint8: ...
     def izy(self) -> uint8: ...
@@ -132,27 +226,6 @@ class CPU_6502(object):
     def tya(self) -> uint8: ...
 
     def xxx(self) -> uint8: ... 
-
-    # external signals
-    def clock(self) -> None: 
-        # one clock cycle to occur
-        ...
-    # reset, irq, nmi can occur at anytime
-    # need to behave async.
-    # interrupts processor from doing what it is currently doing. 
-    # only finishing current instruction
-    def reset(self) -> None: ...
-    def irq(self) -> None:
-        # interrupt request signal
-        # can be ignored depeninding if the interrupt enable flag is set
-        ...
-    def nmi(self) -> None: 
-        # non maskable interrupt request signal
-        ...
-
-    def fetch(self) -> uint8:
-        # fetch data from apporpriate source
-        ...
     
     def generate_table(self) -> List[Instruction]:
         instruction_list = List[Instruction] = [
