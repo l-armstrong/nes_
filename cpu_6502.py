@@ -127,7 +127,14 @@ class CPU_6502(object):
         self.pc += 1
         self.addr_abs &= 0x00FF
         return 0
-    def rel(self) -> uint8: ...
+    def rel(self) -> uint8:
+        # relative address mode, applies to branching instructions
+        # can only jump to locations within a range of 127 memory location
+        self.addr_rel = self.read(self.pc)
+        self.pc += 1
+        # check if this is a signed bit, set hi byte to all ones
+        if (self.addr_rel & 0x80): self.addr_rel |= 0xFF00
+        return 0
     def abs(self) -> uint8: 
         # specifies full address (3 byte instruction)
         lo = self.read(self.pc)
@@ -163,9 +170,39 @@ class CPU_6502(object):
         # clock cycle
         # check if the hi byte has changed checking the hi byte are the same
         return 1 if (self.addr_abs & 0xFF00) != (hi << 8) else 0
-    def ind(self) -> uint8: ...
-    def izx(self) -> uint8: ...
-    def izy(self) -> uint8: ...
+    def ind(self) -> uint8:
+        # 6502 way of implementing pointers
+        lo = self.read(self.pc)
+        self.pc += 1
+        hi = self.read(self.pc)
+        self.pc += 1
+        # construct address
+        ptr = (hi << 8) | lo
+        # simulate page bounday hardware bug
+        if lo == 0x00FF: self.addr_abs = (self.read(ptr & 0xFF00) << 8) | self.read(ptr + 0)
+        else: self.addr_abs = (self.read(ptr + 1) << 8) | self.read(ptr + 0)
+        return 0
+    def izx(self) -> uint8: 
+        # indirect addressing of the zero page with x reg offset
+        # the address is somewhere in the zero page
+        t = self.read(self.pc)
+        self.pc += 1
+        lo = self.read(uint16((t + self.x) & 0x00FF))
+        hi = self.read(uint16((t + self.x + 1) & 0x00FF))
+        self.addr_abs = (hi << 8) | lo
+        return 0
+    def izy(self) -> uint8:
+        # indirect addressing of the zero page with y reg offset
+        # the address is somewhere in the zero page
+        # this is the actual address
+        t = self.read(self.pc)
+        self.pc += 1
+        lo = self.read(uint16(t & 0x00FF))
+        hi = self.read(uint16((t + 1) & 0xFF00))
+        self.addr_abs = (hi << 8) | lo
+        self.addr_abs += self.y
+        # check if we changed the page boundary
+        return 1 if (self.addr_abs & 0xFF00) != (hi << 8) else 0
 
     # Opcodes
     def adc(self) -> uint8: ...
@@ -228,7 +265,7 @@ class CPU_6502(object):
     def xxx(self) -> uint8: ... 
     
     def generate_table(self) -> List[Instruction]:
-        instruction_list = List[Instruction] = [
+        instruction_list: List[Instruction] = [
             Instruction("BRK", self.brk, self.imm, 7), Instruction("ORA", self.ora,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("ORA", self.ora,  self.zp0, 3), Instruction("ASL", self.asl, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PHP", self.php, self.imp, 3), Instruction("ORA", self.ora,  self.imp, 2), Instruction("ASL", self.asl, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abs, 4),  Instruction("ASL", self.asl, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BPL", self.bpl, self.rel, 2), Instruction("ORA", self.ora,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora,  self.zpx, 4), Instruction("ASL", self.asl, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("CLC", self.clc, self.imp, 2), Instruction("ORA", self.ora,  self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abx, 4),  Instruction("ASL", self.asl, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
             Instruction("JSR", self.jsr, self.abs, 6), Instruction("AND", self._and, self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("BIT", self.bit, self.zp0, 3), Instruction("AND", self._and, self.zp0, 3), Instruction("ROL", self.rol, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PLP", self.plp, self.imp, 4), Instruction("AND", self._and, self.imp, 2), Instruction("ROL", self.rol, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("BIT", self.bit, self.abs, 4), Instruction("AND", self._and, self.abs, 4), Instruction("ROL", self.rol, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
