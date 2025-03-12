@@ -8,9 +8,9 @@ from typing import Callable, List
 @dataclass
 class Instruction:
     name:       str
-    cycles:     uint8
     operate:    Callable[[], uint8]
     addrmode:   Callable[[], uint8]
+    cycles:     uint8
 
 class FLAGS(IntEnum):
     C = (1 << 0)    # Carry Bit
@@ -45,12 +45,12 @@ class CPU_6502(object):
     
     def read(self, addr: uint16) -> uint8:
         # read from bus
-        check_type(addr, uint16)
+        # check_type(addr, uint16)
         return self.bus.read(addr, False)
 
     def write(self, addr: uint16, val: uint8) -> None:
         # write to bus
-        check_type(val, uint8)
+        # check_type(val, uint8)
         self.bus.write(addr, val)
     
     def get_flag(self, f: FLAGS) -> uint8:
@@ -73,6 +73,9 @@ class CPU_6502(object):
             # get current number of cycles required
             self.cycles = self.lookup[opcode].cycles
             # call function required for the opcodes address mode
+            print("OPCODE:", hex(opcode))
+            print("OPCODE:", opcode)
+            print("DEBUG:self.lookup[opcode]=", self.lookup[opcode])
             more_cycles_1 = self.lookup[opcode].addrmode()
             # call function required for the operate address mode
             more_cycles_2 = self.lookup[opcode].operate()
@@ -84,14 +87,69 @@ class CPU_6502(object):
     # need to behave async.
     # interrupts processor from doing what it is currently doing. 
     # only finishing current instruction
-    def reset(self) -> None: ...
+    def reset(self) -> None: 
+        # when reset is called it configures the cpu into a known state
+        self.a = 0
+        self.x = 0
+        self.y = 0
+        self.stkp = 0xFD
+        self.status = 0x00 | FLAGS.U
+        # read 16 bit address for the program counter
+        self.addr_abs: uint16 = uint16(0xFFFC)
+        lo: uint16 = self.read(self.addr_abs + 0)
+        hi: uint16 = self.read(self.addr_abs + 1)
+        self.pc: uint16 = (hi << 8) | (lo)
+        # reset result of internal variables
+        self.addr_rel = 0x0000
+        self.addr_abs = 0x0000
+        self.fetched = 0x00
+        self.cycles = 8
     def irq(self) -> None:
         # interrupt request signal
-        # can be ignored depeninding if the interrupt enable flag is set
-        ...
+        # can be ignored depending if the interrupt enable flag is set
+        if self.get_flag(FLAGS.I) == 0x00:
+            # service interrupt
+            # write program counter to the stack starting with hi byte
+            self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
+            self.stkp -= 1
+            # then lo byte
+            self.write(0x0100 + self.stkp, self.pc & 0x00FF)
+            self.stkp -= 1
+            # write status register
+            self.set_flag(FLAGS.B, 0)
+            self.set_flag(FLAGS.U, 1)
+            self.set_flag(FLAGS.I, 1)
+            self.write(0x0100 + self.stkp, self.status)
+            self.stkp -= 1
+            # get new program counter
+            self.addr_abs = 0xFFFE
+            lo: uint16 = self.read(self.addr_abs + 0)
+            hi: uint16 = self.read(self.addr_abs + 1)
+            self.pc = (hi << 8) | lo
+
+            self.cycles = 7
+
     def nmi(self) -> None: 
         # non maskable interrupt request signal
-        ...
+        # service interrupt
+        # write program counter to the stack starting with hi byte
+        self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
+        self.stkp -= 1
+        # then lo byte
+        self.write(0x0100 + self.stkp, self.pc & 0x00FF)
+        self.stkp -= 1
+        # write status register
+        self.set_flag(FLAGS.B, 0)
+        self.set_flag(FLAGS.U, 1)
+        self.set_flag(FLAGS.I, 1)
+        self.write(0x0100 + self.stkp, self.status)
+        self.stkp -= 1
+        # get new program counter
+        self.addr_abs = 0xFFFA
+        lo: uint16 = self.read(self.addr_abs + 0)
+        hi: uint16 = self.read(self.addr_abs + 1)
+        self.pc = (hi << 8) | lo
+        self.cycles = 8
 
     def fetch(self) -> uint8:
         # fetch data from apporpriate source that does not 
@@ -211,7 +269,22 @@ class CPU_6502(object):
         return 1 if (self.addr_abs & 0xFF00) != (hi << 8) else 0
 
     # Opcodes
-    def adc(self) -> uint8: ...
+    def adc(self) -> uint8:
+        # add with carry
+        self.fetch()
+        temp: uint16 = uint16(self.a + self.fetched + self.get_flag(FLAGS.C))
+        # check if carry
+        self.set_flag(FLAGS.C, temp > 255)
+        # check if result is zero
+        self.set_flag(FLAGS.Z, (temp & 0x00FF == 0))
+        # check if negative
+        self.set_flag(FLAGS.N, temp & 0x80)
+        # check if overflow
+        self.set_flag(FLAGS.V, (~(self.a ^ self.fetched) and (self.a ^ temp)) & 0x0080)
+        # store the result
+        self.a = temp & 0x00FF
+        # could require an additional cycle
+        return 1 
     def _and(self) -> uint8: 
         # perform bitwise & on a reg and fetched data
         # fetch data
@@ -306,8 +379,14 @@ class CPU_6502(object):
                 self.cycles += 1
             self.pc = self.addr_abs
         return 0
-    def clc(self) -> uint8: ...
-    def cld(self) -> uint8: ...
+    def clc(self) -> uint8:
+        # clear carry bit
+        self.set_flag(FLAGS.C, False)
+        return 0
+    def cld(self) -> uint8:
+        # clear decimal mode
+        self.set_flag(FLAGS.D, False)
+        return 0
     def cli(self) -> uint8: ...
     def clv(self) -> uint8: ...
     def cmp(self) -> uint8: ...
@@ -328,15 +407,60 @@ class CPU_6502(object):
     def lsr(self) -> uint8: ...
     def nop(self) -> uint8: ...
     def ora(self) -> uint8: ...
-    def pha(self) -> uint8: ...
+    def pha(self) -> uint8: 
+        # push accumulator to the stack
+        # 0x0100 base location for stack pointer offset
+        self.write(0x0100 + self.stkp, self.a)
+        self.stkp -= 1
+        return 0
     def php(self) -> uint8: ...
-    def pla(self) -> uint8: ...
+    def pla(self) -> uint8:
+        # pop off the stack into accum
+        self.stkp += 1
+        # read from bus value we need
+        self.a = self.read(0x0100 + self.stkp)
+        # set flags
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 0
     def plp(self) -> uint8: ...
     def rol(self) -> uint8: ...
     def ror(self) -> uint8: ...
-    def rti(self) -> uint8: ...
+    def rti(self) -> uint8: 
+        # return from interrupt
+        self.stkp += 1
+        # restore status
+        self.status = self.read(0x0100 + self.stkp)
+        self.status &= ~FLAGS.B
+        self.status &= ~FLAGS.U
+        # restore pc
+        self.stkp += 1
+        # starting with lo byte
+        self.pc = uint16(self.read(0x0100 + self.stkp))
+        self.stkp += 1
+        # then hi byte
+        self.pc |= uint16(self.read(0x0100 + self.stkp) << 8)
+        return 0
     def rts(self) -> uint8: ...
-    def sbc(self) -> uint8: ...
+    def sbc(self) -> uint8:
+        # subtract with carry
+        self.fetch()
+        # invert the bits of the data
+        value: uint16 = uint16(self.fetched) ^ 0x00FF
+
+        temp: uint16 = uint16(self.a + value + self.get_flag(FLAGS.C))
+        # check if carry
+        self.set_flag(FLAGS.C, temp & 0xFF00)
+        # check if result is zero
+        self.set_flag(FLAGS.Z, (temp & 0x00FF == 0))
+        # check if negative
+        self.set_flag(FLAGS.N, temp & 0x0080)
+        # check if overflow
+        self.set_flag(FLAGS.V, ((self.a ^ temp) and (value ^ temp)) & 0x0080)
+        # store the result
+        self.a = temp & 0x00FF
+        return 1
+
     def sec(self) -> uint8: ...
     def sed(self) -> uint8: ...
     def sei(self) -> uint8: ...
@@ -351,6 +475,8 @@ class CPU_6502(object):
     def tya(self) -> uint8: ...
 
     def xxx(self) -> uint8: ... 
+
+    def complete(self) -> bool: return self.cycles == 0
     
     def generate_table(self) -> List[Instruction]:
         instruction_list: List[Instruction] = [
