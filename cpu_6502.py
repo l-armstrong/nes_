@@ -224,24 +224,88 @@ class CPU_6502(object):
         # requires additional clock cycles
         return 1
     def asl(self) -> uint8: ...
-    def bcc(self) -> uint8: ...
-    def bcs(self) -> uint8: 
-        # brance if carry bit is set
-        if self.get_flag(FLAGS.C) == 0x01:
+    def bcc(self) -> uint8: 
+        # branch if carry bit is clear
+        if self.get_flag(FLAGS.C) == 0x00:
             self.cycles += 1
             self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
         return 0
-    def beq(self) -> uint8: ...
+    def bcs(self) -> uint8: 
+        # branch if carry bit is set
+        if self.get_flag(FLAGS.C) == 0x01:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
+    def beq(self) -> uint8:
+        # branch if equal
+        if self.get_flag(FLAGS.Z) == 0x01:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
     def bit(self) -> uint8: ...
-    def bmi(self) -> uint8: ...
-    def bne(self) -> uint8: ...
-    def bpl(self) -> uint8: ...
+    def bmi(self) -> uint8: 
+        # branch if negative
+        if self.get_flag(FLAGS.N) == 0x01:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
+    def bne(self) -> uint8: 
+        # branch if not equal
+        if self.get_flag(FLAGS.Z) == 0x00:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
+    def bpl(self) -> uint8: 
+        # branch if positive
+        if self.get_flag(FLAGS.N) == 0x00:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
     def brk(self) -> uint8: ...
-    def bvc(self) -> uint8: ...
-    def bvs(self) -> uint8: ...
+    def bvc(self) -> uint8: 
+        # branch if overflow
+        if self.get_flag(FLAGS.V) == 0x00:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
+    def bvs(self) -> uint8:
+        # branch if not overflow
+        if self.get_flag(FLAGS.V) == 0x01:
+            self.cycles += 1
+            self.addr_abs = self.pc + self.addr_rel
+            # check if we are crossing a page boundary
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+                self.cycles += 1
+            self.pc = self.addr_abs
+        return 0
     def clc(self) -> uint8: ...
     def cld(self) -> uint8: ...
     def cli(self) -> uint8: ...
