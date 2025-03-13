@@ -67,19 +67,16 @@ class CPU_6502(object):
         # one clock cycle to occur
         if (self.cycles == 0):
             # 1 byte opcode to index table
-            opcode: uint8 = self.read(self.pc)
+            self.opcode: uint8 = self.read(self.pc)
             # increase pc after reading
             self.pc += 1
             # get current number of cycles required
-            self.cycles = self.lookup[opcode].cycles
+            self.cycles = self.lookup[self.opcode].cycles
             # call function required for the opcodes address mode
-            print("OPCODE:", hex(opcode))
-            print("OPCODE:", opcode)
-            print("DEBUG:self.lookup[opcode]=", self.lookup[opcode])
-            more_cycles_1 = self.lookup[opcode].addrmode()
+            more_cycles_1 = self.lookup[self.opcode].addrmode()
             # call function required for the operate address mode
-            more_cycles_2 = self.lookup[opcode].operate()
-            # more_cycles_1 and more_cycles 2 return 1 or 0 if there needs to be another clock cycle
+            more_cycles_2 = self.lookup[self.opcode].operate()
+            # more_cycles_1 and more_cycles_2 return 1 or 0 if there needs to be another clock cycle
             self.cycles += (more_cycles_1 & more_cycles_2)
         # cycle is decremented every time the clock is called
         self.cycles -= 1
@@ -156,7 +153,7 @@ class CPU_6502(object):
         # have an address mode of implied.
         if self.lookup[self.opcode].addrmode is not self.imp:
             self.fetched = self.read(self.addr_abs)
-        return self.fetched
+        return uint8(self.fetched)
     
     # Adressing Modes 
     def imp(self) -> uint8: 
@@ -197,7 +194,9 @@ class CPU_6502(object):
         self.addr_rel: uint16 = self.read(self.pc)
         self.pc += 1
         # check if this is a signed bit, set hi byte to all ones
-        if (self.addr_rel & 0x80): self.addr_rel |= 0xFF00
+        if (self.addr_rel & 0x80): 
+            # self.addr_rel |= 0xFF00
+            self.addr_rel = self.addr_rel - 256 if self.addr_rel > 127 else self.addr_rel
         return 0
     def abs(self) -> uint8: 
         # specifies full address (3 byte instruction)
@@ -296,7 +295,21 @@ class CPU_6502(object):
         self.set_flag(FLAGS.N, self.a & 0x80)
         # requires additional clock cycles
         return 1
-    def asl(self) -> uint8: ...
+    def asl(self) -> uint8: 
+        # arithmetic shift left
+        # fetch data
+        self.fetch()
+        tmp = uint16(self.fetched << 1)
+        # update status flags
+        self.set_flag(FLAGS.C, (tmp & 0xFF00) > 0)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x00)
+        self.set_flag(FLAGS.N, tmp & 0x80)
+        # check if imp to handle case where we store in a reg
+        if self.lookup[self.opcode] is self.imp:
+            self.a = uint8(tmp)
+        else:
+            self.write(self.addr_abs, uint8(tmp))
+        return 0
     def bcc(self) -> uint8: 
         # branch if carry bit is clear
         if self.get_flag(FLAGS.C) == 0x00:
@@ -358,7 +371,30 @@ class CPU_6502(object):
                 self.cycles += 1
             self.pc = self.addr_abs
         return 0
-    def brk(self) -> uint8: ...
+    def brk(self) -> uint8:
+        # break (software irq)
+        # brk is a 2 byte instruction, however, we dont care about about second byte
+        # this increment the pc by 1 before pushing on stack
+        # push current program counter on stack
+        self.pc += 1
+        # set interrupt disable flag
+        self.set_flag(FLAGS.I, True)
+        self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
+        self.stkp -= 1
+        self.write(0x0100 + self.stkp, self.pc & 0xFF)
+        self.stkp -= 1
+
+        # set break flag
+        self.set_flag(FLAGS.B, True)
+        # push status reg on stack
+        self.write(0x0100 + self.stkp, self.status)
+        self.stkp -= 1
+        # clear break flag
+        self.set_flag(FLAGS.B, False)
+
+        self.pc = uint16(self.read(0xFFFE) | (self.read(0xFFFF) << 8))
+        return 0
+        
     def bvc(self) -> uint8: 
         # branch if overflow
         if self.get_flag(FLAGS.V) == 0x00:
@@ -394,19 +430,67 @@ class CPU_6502(object):
     def cpy(self) -> uint8: ...
     def dec(self) -> uint8: ...
     def dex(self) -> uint8: ...
-    def dey(self) -> uint8: ...
+    def dey(self) -> uint8: 
+        # decrement 1 from Y reg. Does not effect carry or overflow
+        # decrement Y reg
+        self.y = uint8(self.y - 1)
+        # update flags
+        self.set_flag(FLAGS.Z, self.y == 0x00)
+        self.set_flag(FLAGS.N, self.y & 0x80)
+        return 0
     def eor(self) -> uint8: ...
     def inc(self) -> uint8: ...
     def inx(self) -> uint8: ...
     def iny(self) -> uint8: ...
     def jmp(self) -> uint8: ...
     def jsr(self) -> uint8: ...
-    def lda(self) -> uint8: ...
-    def ldx(self) -> uint8: ...
-    def ldy(self) -> uint8: ...
+    def lda(self) -> uint8: 
+        # load a memory value into the A reg
+        # fetch data to be read into fetched
+        self.fetch()
+        # load fetched data into X register
+        self.a = uint8(self.fetched)
+        # set flags
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 1
+    def ldx(self) -> uint8: 
+        # loads a memory value into the X register
+        # fetch data to be read into fetched
+        self.fetch()
+        # load fetched data into X register
+        self.x = uint8(self.fetched)
+        # set flags
+        self.set_flag(FLAGS.Z, self.x == 0x00)
+        self.set_flag(FLAGS.N, self.x & 0x80)
+        return 1
+    def ldy(self) -> uint8: 
+        # loads a memory value into the Y register
+        # fetch data to be read into fetched
+        self.fetch()
+        # load fetched data into X register
+        self.y = uint8(self.fetched)
+        # set flags
+        self.set_flag(FLAGS.Z, self.y == 0x00)
+        self.set_flag(FLAGS.N, self.y & 0x80)
+        return 1
     def lsr(self) -> uint8: ...
-    def nop(self) -> uint8: ...
-    def ora(self) -> uint8: ...
+    def nop(self) -> uint8:
+        # has no effect. wastest space and CPU cycles. C
+        # can be useful when writing timed code to delay for a desired amount of time
+        match self.opcode:
+            case 0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC: return 1
+            case _: return 0 
+    def ora(self) -> uint8: 
+        # bitwise OR a memory value and the A reg.
+        # fetch data
+        self.fetch()
+        self.a = uint8(self.a | self.fetched)
+        # update status reg
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 1
+
     def pha(self) -> uint8: 
         # push accumulator to the stack
         # 0x0100 base location for stack pointer offset
@@ -464,8 +548,15 @@ class CPU_6502(object):
     def sec(self) -> uint8: ...
     def sed(self) -> uint8: ...
     def sei(self) -> uint8: ...
-    def sta(self) -> uint8: ...
-    def stx(self) -> uint8: ...
+    def sta(self) -> uint8:
+        # stores the accumulator value into memory
+        self.write(self.addr_abs, self.a)
+        return 0
+    def stx(self) -> uint8: 
+        # Stores the X reg value into memory
+        # write
+        self.write(self.addr_abs, self.x)
+        return 0
     def sty(self) -> uint8: ...
     def tax(self) -> uint8: ...
     def tay(self) -> uint8: ...
@@ -474,7 +565,7 @@ class CPU_6502(object):
     def txs(self) -> uint8: ...
     def tya(self) -> uint8: ...
 
-    def xxx(self) -> uint8: ... 
+    def xxx(self) -> uint8: return 0 # illegal opcode
 
     def complete(self) -> bool: return self.cycles == 0
     
@@ -482,19 +573,19 @@ class CPU_6502(object):
         instruction_list: List[Instruction] = [
             Instruction("BRK", self.brk, self.imm, 7), Instruction("ORA", self.ora,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("ORA", self.ora,  self.zp0, 3), Instruction("ASL", self.asl, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PHP", self.php, self.imp, 3), Instruction("ORA", self.ora,  self.imp, 2), Instruction("ASL", self.asl, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abs, 4),  Instruction("ASL", self.asl, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BPL", self.bpl, self.rel, 2), Instruction("ORA", self.ora,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora,  self.zpx, 4), Instruction("ASL", self.asl, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("CLC", self.clc, self.imp, 2), Instruction("ORA", self.ora,  self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abx, 4),  Instruction("ASL", self.asl, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
-            Instruction("JSR", self.jsr, self.abs, 6), Instruction("AND", self._and, self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("BIT", self.bit, self.zp0, 3), Instruction("AND", self._and, self.zp0, 3), Instruction("ROL", self.rol, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PLP", self.plp, self.imp, 4), Instruction("AND", self._and, self.imp, 2), Instruction("ROL", self.rol, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("BIT", self.bit, self.abs, 4), Instruction("AND", self._and, self.abs, 4), Instruction("ROL", self.rol, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
+            Instruction("JSR", self.jsr, self.abs, 6), Instruction("AND", self._and, self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("BIT", self.bit, self.zp0, 3), Instruction("AND", self._and, self.zp0, 3), Instruction("ROL", self.rol, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PLP", self.plp, self.imp, 4), Instruction("AND", self._and, self.imm, 2), Instruction("ROL", self.rol, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("BIT", self.bit, self.abs, 4), Instruction("AND", self._and, self.abs, 4), Instruction("ROL", self.rol, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BMI", self.bmi, self.rel, 2), Instruction("AND", self._and, self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("AND", self._and, self.zpx, 4), Instruction("ROL", self.rol, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("SEC", self.sec, self.imp, 2), Instruction("AND", self._and, self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("AND", self._and, self.abx, 4), Instruction("ROL", self.rol, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
-            Instruction("RTI", self.rti, self.imp, 6), Instruction("EOR", self.eor,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("EOR", self.eor,  self.zp0, 3), Instruction("LSR", self.lsr, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PHA", self.pha, self.imp, 3), Instruction("EOR", self.eor,  self.imp, 2), Instruction("LSR", self.lsr, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("JMP", self.jmp, self.abs, 3), Instruction("EOR", self.eor, self.abs, 4),  Instruction("LSR", self.lsr, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
+            Instruction("RTI", self.rti, self.imp, 6), Instruction("EOR", self.eor,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("EOR", self.eor,  self.zp0, 3), Instruction("LSR", self.lsr, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PHA", self.pha, self.imp, 3), Instruction("EOR", self.eor,  self.imm, 2), Instruction("LSR", self.lsr, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("JMP", self.jmp, self.abs, 3), Instruction("EOR", self.eor, self.abs, 4),  Instruction("LSR", self.lsr, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BVC", self.bvc, self.rel, 2), Instruction("EOR", self.eor,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("EOR", self.eor,  self.zpx, 4), Instruction("LSR", self.lsr, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("CLI", self.cli, self.imp, 2), Instruction("EOR", self.eor,  self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("EOR", self.eor, self.abx, 4),  Instruction("LSR", self.lsr, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
-            Instruction("RTS", self.rts, self.imp, 6), Instruction("ADC", self.adc,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("ADC", self.adc,  self.zp0, 3), Instruction("ROR", self.ror, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PLA", self.pla, self.imp, 4), Instruction("ADC", self.adc,  self.imp, 2), Instruction("ROR", self.ror, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("JMP", self.jmp, self.ind, 5), Instruction("ADC", self.adc, self.abs, 4),  Instruction("ROR", self.ror, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
+            Instruction("RTS", self.rts, self.imp, 6), Instruction("ADC", self.adc,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("ADC", self.adc,  self.zp0, 3), Instruction("ROR", self.ror, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PLA", self.pla, self.imp, 4), Instruction("ADC", self.adc,  self.imm, 2), Instruction("ROR", self.ror, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("JMP", self.jmp, self.ind, 5), Instruction("ADC", self.adc, self.abs, 4),  Instruction("ROR", self.ror, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BVS", self.bvs, self.rel, 2), Instruction("ADC", self.adc,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("ADC", self.adc,  self.zpx, 4), Instruction("ROR", self.ror, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("SEI", self.sei, self.imp, 2), Instruction("ADC", self.adc,  self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("ADC", self.adc, self.abx, 4),  Instruction("ROR", self.ror, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
             Instruction("???", self.nop, self.imp, 2), Instruction("STA", self.sta,  self.izx, 6), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 6), Instruction("STY", self.sty, self.zp0, 3), Instruction("STA", self.sta,  self.zp0, 3), Instruction("STX", self.stx, self.zp0, 3), Instruction("???", self.xxx, self.imp, 3), Instruction("DEY", self.dey, self.imp, 2), Instruction("???", self.nop,  self.imp, 2), Instruction("TXA", self.txa, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("STY", self.sty, self.abs, 4), Instruction("STA", self.sta, self.abs, 4),  Instruction("STX", self.stx, self.abs, 4), Instruction("???", self.xxx, self.imp, 4),
             Instruction("BCC", self.bcc, self.rel, 2), Instruction("STA", self.sta,  self.izy, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 6), Instruction("STY", self.sty, self.zpx, 4), Instruction("STA", self.sta,  self.zpx, 4), Instruction("STX", self.stx, self.zpy, 4), Instruction("???", self.xxx, self.imp, 4), Instruction("TYA", self.tya, self.imp, 2), Instruction("STA", self.sta,  self.aby, 5), Instruction("TXS", self.txs, self.imp, 2), Instruction("???", self.xxx, self.imp, 5), Instruction("???", self.nop, self.imp, 5), Instruction("STA", self.sta, self.abx, 5),  Instruction("???", self.xxx, self.imp, 5), Instruction("???", self.xxx, self.imp, 5),
-            Instruction("LDY", self.ldy, self.imp, 2), Instruction("LDA", self.lda,  self.izx, 6), Instruction("LDX", self.ldx, self.imp, 2), Instruction("???", self.xxx, self.imp, 6), Instruction("LDY", self.ldy, self.zp0, 3), Instruction("LDA", self.lda,  self.zp0, 3), Instruction("LDX", self.ldx, self.zp0, 3), Instruction("???", self.xxx, self.imp, 3), Instruction("TAY", self.tay, self.imp, 2), Instruction("LDA", self.lda,  self.imp, 2), Instruction("TAX", self.tax, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("LDY", self.ldy, self.abs, 4), Instruction("LDA", self.lda, self.abs, 4),  Instruction("LDX", self.ldx, self.abs, 4), Instruction("???", self.xxx, self.imp, 4),
+            Instruction("LDY", self.ldy, self.imm, 2), Instruction("LDA", self.lda,  self.izx, 6), Instruction("LDX", self.ldx, self.imm, 2), Instruction("???", self.xxx, self.imp, 6), Instruction("LDY", self.ldy, self.zp0, 3), Instruction("LDA", self.lda,  self.zp0, 3), Instruction("LDX", self.ldx, self.zp0, 3), Instruction("???", self.xxx, self.imp, 3), Instruction("TAY", self.tay, self.imp, 2), Instruction("LDA", self.lda,  self.imm, 2), Instruction("TAX", self.tax, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("LDY", self.ldy, self.abs, 4), Instruction("LDA", self.lda, self.abs, 4),  Instruction("LDX", self.ldx, self.abs, 4), Instruction("???", self.xxx, self.imp, 4),
             Instruction("BCS", self.bcs, self.rel, 2), Instruction("LDA", self.lda,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 5), Instruction("LDY", self.ldy, self.zpx, 4), Instruction("LDA", self.lda,  self.zpx, 4), Instruction("LDX", self.ldx, self.zpy, 4), Instruction("???", self.xxx, self.imp, 4), Instruction("CLV", self.clv, self.imp, 2), Instruction("LDA", self.lda,  self.aby, 4), Instruction("TSX", self.tsx, self.imp, 2), Instruction("???", self.xxx, self.imp, 4), Instruction("LDY", self.ldy, self.abx, 4), Instruction("LDA", self.lda, self.abx, 4),  Instruction("LDX", self.ldx, self.aby, 4), Instruction("???", self.xxx, self.imp, 4),
-            Instruction("CPY", self.cpy, self.imp, 2), Instruction("CMP", self.cmp,  self.izx, 6), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("CPY", self.cpy, self.zp0, 3), Instruction("CMP", self.cmp,  self.zp0, 3), Instruction("DEC", self.dec, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("INY", self.iny, self.imp, 2), Instruction("CMP", self.cmp,  self.imp, 2), Instruction("DEX", self.dex, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("CPY", self.cpy, self.abs, 4), Instruction("CMP", self.cmp, self.abs, 4),  Instruction("DEC", self.dec, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
+            Instruction("CPY", self.cpy, self.imm, 2), Instruction("CMP", self.cmp,  self.izx, 6), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("CPY", self.cpy, self.zp0, 3), Instruction("CMP", self.cmp,  self.zp0, 3), Instruction("DEC", self.dec, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("INY", self.iny, self.imp, 2), Instruction("CMP", self.cmp,  self.imm, 2), Instruction("DEX", self.dex, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("CPY", self.cpy, self.abs, 4), Instruction("CMP", self.cmp, self.abs, 4),  Instruction("DEC", self.dec, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BNE", self.bne, self.rel, 2), Instruction("CMP", self.cmp,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("CMP", self.cmp,  self.zpx, 4), Instruction("DEC", self.dec, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("CLD", self.cld, self.imp, 2), Instruction("CMP", self.cmp,  self.aby, 4), Instruction("NOP", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("CMP", self.cmp, self.abx, 4),  Instruction("DEC", self.dec, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
-            Instruction("CPX", self.cpx, self.imp, 2), Instruction("SBC", self.sbc,  self.izx, 6), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("CPX", self.cpx, self.zp0, 3), Instruction("SBC", self.sbc,  self.zp0, 3), Instruction("INC", self.inc, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("INX", self.inx, self.imp, 2), Instruction("SBC", self.sbc,  self.imp, 2), Instruction("NOP", self.nop, self.imp, 2), Instruction("???", self.sbc, self.imp, 2), Instruction("CPX", self.cpx, self.abs, 4), Instruction("SBC", self.sbc, self.abs, 4),  Instruction("INC", self.inc, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
+            Instruction("CPX", self.cpx, self.imm, 2), Instruction("SBC", self.sbc,  self.izx, 6), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("CPX", self.cpx, self.zp0, 3), Instruction("SBC", self.sbc,  self.zp0, 3), Instruction("INC", self.inc, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("INX", self.inx, self.imp, 2), Instruction("SBC", self.sbc,  self.imm, 2), Instruction("NOP", self.nop, self.imp, 2), Instruction("???", self.sbc, self.imp, 2), Instruction("CPX", self.cpx, self.abs, 4), Instruction("SBC", self.sbc, self.abs, 4),  Instruction("INC", self.inc, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BEQ", self.beq, self.rel, 2), Instruction("SBC", self.sbc,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("SBC", self.sbc,  self.zpx, 4), Instruction("INC", self.inc, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("SED", self.sed, self.imp, 2), Instruction("SBC", self.sbc,  self.aby, 4), Instruction("NOP", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("SBC", self.sbc, self.abx, 4),  Instruction("INC", self.inc, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
         ]
         return instruction_list
