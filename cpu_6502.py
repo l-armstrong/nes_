@@ -68,6 +68,7 @@ class CPU_6502(object):
         if (self.cycles == 0):
             # 1 byte opcode to index table
             self.opcode: uint8 = self.read(self.pc)
+            print("[DEBUG] opcode:", hex(self.opcode))
             # increase pc after reading
             self.pc += 1
             # get current number of cycles required
@@ -547,7 +548,9 @@ class CPU_6502(object):
 
     def sec(self) -> uint8: ...
     def sed(self) -> uint8: ...
-    def sei(self) -> uint8: ...
+    def sei(self) -> uint8: 
+        #
+        print("IN SEI")
     def sta(self) -> uint8:
         # stores the accumulator value into memory
         self.write(self.addr_abs, self.a)
