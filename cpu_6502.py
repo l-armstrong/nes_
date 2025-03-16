@@ -475,7 +475,22 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, self.y == 0x00)
         self.set_flag(FLAGS.N, self.y & 0x80)
         return 1
-    def lsr(self) -> uint8: ...
+    def lsr(self) -> uint8: 
+        # shift all bits one pos to the right 
+        self.fetch()
+        # bit 0 is shifted into the carry flag
+        self.set_flag(FLAGS.C, self.fetched & 0x01)
+        tmp = self.fetched >> 1
+        # set Zero Flag
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        # set N Flag
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        if self.lookup[self.opcode].addrmode is self.imp:
+            self.a = tmp & 0x00FF
+        else:
+            self.write(self.addr_abs, tmp & 0x00FF)
+        return 0
+        
     def nop(self) -> uint8:
         # has no effect. wastest space and CPU cycles. C
         # can be useful when writing timed code to delay for a desired amount of time
