@@ -68,7 +68,7 @@ class CPU_6502(object):
         if (self.cycles == 0):
             # 1 byte opcode to index table
             self.opcode: uint8 = self.read(self.pc)
-            print("[DEBUG] opcode:", hex(self.opcode))
+            print(f"{hex(self.pc)} {hex(self.opcode)} {self.lookup[self.opcode].name}\tA:{hex(self.a)} X:{hex(self.x)} Y:{hex(self.y)} SP:{hex(self.stkp)}")
             # increase pc after reading
             self.pc += 1
             # get current number of cycles required
@@ -151,7 +151,7 @@ class CPU_6502(object):
 
     def fetch(self) -> uint8:
         # fetch data from apporpriate source that does not 
-        # have an address mode of implied.
+        # check if current instr. has an address mode of implied.
         if self.lookup[self.opcode].addrmode is not self.imp:
             self.fetched = self.read(self.addr_abs)
         return uint8(self.fetched)
@@ -241,7 +241,7 @@ class CPU_6502(object):
         hi = self.read(self.pc)
         self.pc += 1
         # construct address
-        ptr = (hi << 8) | lo
+        ptr = uint16((hi << 8) | lo)
         # simulate page bounday hardware bug
         if lo == 0x00FF: self.addr_abs: uint16 = (self.read(ptr & 0xFF00) << 8) | self.read(ptr + 0)
         else: self.addr_abs: uint16 = (self.read(ptr + 1) << 8) | self.read(ptr + 0)
@@ -341,7 +341,14 @@ class CPU_6502(object):
                 self.cycles += 1
             self.pc = self.addr_abs
         return 0
-    def bit(self) -> uint8: ...
+    def bit(self) -> uint8: 
+        # modifies flags, but does not change memory or registers
+        self.fetch()
+        # The zero flag is set depending on the result of the accumulator AND memory value
+        self.set_flag(FLAGS.Z, uint8(self.a & self.fetched) == 0x00)
+        self.set_flag(FLAGS.V, self.fetched & (1 << 6))
+        self.set_flag(FLAGS.N, self.fetched & (1 << 7))
+        return 0
     def bmi(self) -> uint8: 
         # branch if negative
         if self.get_flag(FLAGS.N) == 0x01:
@@ -366,9 +373,9 @@ class CPU_6502(object):
         # branch if positive
         if self.get_flag(FLAGS.N) == 0x00:
             self.cycles += 1
-            self.addr_abs = self.pc + self.addr_rel
+            self.addr_abs = uint16(self.pc + self.addr_rel)
             # check if we are crossing a page boundary
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
+            if (self.addr_abs & 0xFF00) != (uint16(self.pc) & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
         return 0
@@ -425,8 +432,19 @@ class CPU_6502(object):
         self.set_flag(FLAGS.D, False)
         return 0
     def cli(self) -> uint8: ...
-    def clv(self) -> uint8: ...
-    def cmp(self) -> uint8: ...
+    def clv(self) -> uint8: 
+        # clears the overflow flag
+        self.set_flag(FLAGS.V, False)
+        return 0
+    def cmp(self) -> uint8: 
+        # compares A to a memory value
+        # comparison is implemented as a subtraction
+        self.fetch()
+        tmp = uint16(self.a) - uint16(self.fetched)
+        self.set_flag(FLAGS.C, self.a >= self.fetched)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 1
     def cpx(self) -> uint8: ...
     def cpy(self) -> uint8: ...
     def dec(self) -> uint8: ...
@@ -439,12 +457,31 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, self.y == 0x00)
         self.set_flag(FLAGS.N, self.y & 0x80)
         return 0
-    def eor(self) -> uint8: ...
+    def eor(self) -> uint8:
+        # exclusive-ORs a memory value and the accumulator
+        pass
     def inc(self) -> uint8: ...
     def inx(self) -> uint8: ...
     def iny(self) -> uint8: ...
-    def jmp(self) -> uint8: ...
-    def jsr(self) -> uint8: ...
+    def jmp(self) -> uint8: 
+        # sets the program counter to a new value, allowing code to execute from a new location.
+        self.pc = self.addr_abs
+        return 0
+    
+    def jsr(self) -> uint8: 
+        # pushes the current program counter to the stack and then sets the program counter to a new value
+        #  the return address on the stack points 1 byte before the start of the next instruction
+        self.pc -= 1
+        # push hi byte on stack
+        self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
+        self.stkp -= 1
+        # push lo byte on stack
+        self.write(0x0100 + self.stkp, self.pc & 0x00FF)
+        self.stkp -= 1
+        # go to new address
+        self.pc = self.addr_abs
+        return 0
+    
     def lda(self) -> uint8: 
         # load a memory value into the A reg
         # fetch data to be read into fetched
@@ -501,7 +538,9 @@ class CPU_6502(object):
         # bitwise OR a memory value and the A reg.
         # fetch data
         self.fetch()
+        print("SELF.A IN ORA:", self.a)
         self.a = uint8(self.a | self.fetched)
+        print("self.fetched IN ORA:", self.fetched)
         # update status reg
         self.set_flag(FLAGS.Z, self.a == 0x00)
         self.set_flag(FLAGS.N, self.a & 0x80)
@@ -513,18 +552,44 @@ class CPU_6502(object):
         self.write(0x0100 + self.stkp, self.a)
         self.stkp -= 1
         return 0
-    def php(self) -> uint8: ...
+    def php(self) -> uint8: 
+        # stores a byte to the stack containing the 6 status flags and B flag and then decrements the stack pointer
+        # push status flags on stack
+        self.write(0x0100 + self.stkp, self.status | FLAGS.B | FLAGS.U)
+        self.set_flag(FLAGS.B, False)
+        self.set_flag(FLAGS.U, False)
+        # dec sp
+        self.stkp -= 1
+        return 0
     def pla(self) -> uint8:
         # pop off the stack into accum
         self.stkp += 1
         # read from bus value we need
         self.a = self.read(0x0100 + self.stkp)
-        # set flags
+        # update flags
         self.set_flag(FLAGS.Z, self.a == 0x00)
         self.set_flag(FLAGS.N, self.a & 0x80)
         return 0
-    def plp(self) -> uint8: ...
-    def rol(self) -> uint8: ...
+    def plp(self) -> uint8:
+        # increments the stack pointer and then loads the value at that stack position into the 6 status flags.
+        # pull value off stack into status register
+        self.stkp = self.stkp + 1
+        self.status = self.read(0x0100 + self.stkp)
+        self.set_flag(FLAGS.U, True)
+        return 0
+    def rol(self) -> uint8:
+        # shift memory value/acc to the left
+        self.fetch()
+        # the value in carry is shifted into bit 0
+        tmp = (uint16(self.fetched) << 1) | self.get_flag(FLAGS.C)
+        # update flags
+        self.set_flag(FLAGS.C, tmp & 0xFF00)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        if self.lookup[self.opcode].addrmode is self.imp: self.a = tmp & 0x00FF
+        else: self.write(self.addr_abs, tmp & 0x00FF)
+        return 0
+
     def ror(self) -> uint8: ...
     def rti(self) -> uint8: 
         # return from interrupt
@@ -541,7 +606,17 @@ class CPU_6502(object):
         # then hi byte
         self.pc |= uint16(self.read(0x0100 + self.stkp) << 8)
         return 0
-    def rts(self) -> uint8: ...
+    def rts(self) -> uint8: 
+        # pulls an address from the stack into the program counter and then increments the program counter
+        self.stkp += 1
+        # pull lo byte
+        self.pc = uint16(self.read(0x0100 + self.stkp))
+        self.stkp += 1
+        # pull hi byte
+        self.pc |= uint16(self.read(0x0100 + self.stkp) << 8)
+        # go to next instruction
+        self.pc += 1
+        return 0
     def sbc(self) -> uint8:
         # subtract with carry
         self.fetch()
@@ -561,11 +636,21 @@ class CPU_6502(object):
         self.a = temp & 0x00FF
         return 1
 
-    def sec(self) -> uint8: ...
-    def sed(self) -> uint8: ...
+    def sec(self) -> uint8: 
+        # sets the carry flag. 
+        # this is usually done before subtracting the low byte of a value with SBC 
+        # to avoid subtracting an extra 1.
+        self.set_flag(FLAGS.C, True)
+        return 0
+
+    def sed(self) -> uint8: 
+        # sets the decimal flag
+        self.set_flag(FLAGS.D, True)
+        return 0
     def sei(self) -> uint8: 
-        #
-        print("IN SEI")
+        # SEI sets the interrupt disable flag, preventing the CPU from handling hardware IRQs
+        self.set_flag(FLAGS.I, True)
+        return 0
     def sta(self) -> uint8:
         # stores the accumulator value into memory
         self.write(self.addr_abs, self.a)
@@ -580,7 +665,10 @@ class CPU_6502(object):
     def tay(self) -> uint8: ...
     def tsx(self) -> uint8: ...
     def txa(self) -> uint8: ...
-    def txs(self) -> uint8: ...
+    def txs(self) -> uint8: 
+        # TXS copies the X register value to the stack pointer.
+        self.stkp = self.x
+        return 0
     def tya(self) -> uint8: ...
 
     def xxx(self) -> uint8: return 0 # illegal opcode
@@ -589,7 +677,7 @@ class CPU_6502(object):
     
     def generate_table(self) -> List[Instruction]:
         instruction_list: List[Instruction] = [
-            Instruction("BRK", self.brk, self.imm, 7), Instruction("ORA", self.ora,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("ORA", self.ora,  self.zp0, 3), Instruction("ASL", self.asl, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PHP", self.php, self.imp, 3), Instruction("ORA", self.ora,  self.imp, 2), Instruction("ASL", self.asl, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abs, 4),  Instruction("ASL", self.asl, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
+            Instruction("BRK", self.brk, self.imm, 7), Instruction("ORA", self.ora,  self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 3), Instruction("ORA", self.ora,  self.zp0, 3), Instruction("ASL", self.asl, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PHP", self.php, self.imp, 3), Instruction("ORA", self.ora,  self.imm, 2), Instruction("ASL", self.asl, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abs, 4),  Instruction("ASL", self.asl, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BPL", self.bpl, self.rel, 2), Instruction("ORA", self.ora,  self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora,  self.zpx, 4), Instruction("ASL", self.asl, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("CLC", self.clc, self.imp, 2), Instruction("ORA", self.ora,  self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("ORA", self.ora, self.abx, 4),  Instruction("ASL", self.asl, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),
             Instruction("JSR", self.jsr, self.abs, 6), Instruction("AND", self._and, self.izx, 6), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("BIT", self.bit, self.zp0, 3), Instruction("AND", self._and, self.zp0, 3), Instruction("ROL", self.rol, self.zp0, 5), Instruction("???", self.xxx, self.imp, 5), Instruction("PLP", self.plp, self.imp, 4), Instruction("AND", self._and, self.imm, 2), Instruction("ROL", self.rol, self.imp, 2), Instruction("???", self.xxx, self.imp, 2), Instruction("BIT", self.bit, self.abs, 4), Instruction("AND", self._and, self.abs, 4), Instruction("ROL", self.rol, self.abs, 6), Instruction("???", self.xxx, self.imp, 6),
             Instruction("BMI", self.bmi, self.rel, 2), Instruction("AND", self._and, self.izy, 5), Instruction("???", self.xxx, self.imp, 2), Instruction("???", self.xxx, self.imp, 8), Instruction("???", self.nop, self.imp, 4), Instruction("AND", self._and, self.zpx, 4), Instruction("ROL", self.rol, self.zpx, 6), Instruction("???", self.xxx, self.imp, 6), Instruction("SEC", self.sec, self.imp, 2), Instruction("AND", self._and, self.aby, 4), Instruction("???", self.nop, self.imp, 2), Instruction("???", self.xxx, self.imp, 7), Instruction("???", self.nop, self.imp, 4), Instruction("AND", self._and, self.abx, 4), Instruction("ROL", self.rol, self.abx, 7), Instruction("???", self.xxx, self.imp, 7),

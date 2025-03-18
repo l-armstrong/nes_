@@ -12,22 +12,39 @@ if __name__ == '__main__':
     #     index += 1
     # bus.ram[0xFFFC] = 0x00
     # bus.ram[0xFFFD] = 0x80
-    with open("nestest.nes", "rb") as rom:
-        index = 0x8000
-        while byte := rom.read(1):
-            bus.ram[index] = int.from_bytes(byte, byteorder='little')
-            index += 1
+    # with open("nestest.nes", "rb") as rom:
+    #     index = 0x8000
+    #     while byte := rom.read(1):
+    #         bus.ram[index] = int.from_bytes(byte, byteorder='little')
+    #         index += 1
     
-    bus.ram[0xFFFC] = 0x00
-    bus.ram[0xFFFD] = 0x80
-
+    # bus.ram[0xFFFC] = 0x00
+    # bus.ram[0xFFFD] = 0x80
+    # with open("nestest.nes", "rb") as rom:
+    #     index = 0xc000
+    #     while byte := rom.read(1):
+    #         bus.ram[index] = int.from_bytes(byte, byteorder='little')
+    #         index += 1
+    with open("nestest.nes", "rb") as f:
+        rom = f.read()
+    
+    header = rom[:16]
+    rom_size = header[4] * 0x4000
+    program = rom[16:16+rom_size]
+    size = len(program)
+    if size == 0x4000:
+        bus.ram[0x8000:0xC000] = program
+        bus.ram[0xC000:0x10000] = program
+    elif size == 0x8000:
+        bus.ram[0x8000:0x10000]
+    else:
+        raise ValueError("Unsupported PRG ROM size")
+    
     cpu.reset()
-    count = 0
+    cpu.pc = 0xc000
     while True:
-        count += 1
         cpu.clock()
-        print("DEBUG:self.lookup[opcode]=", cpu.lookup[cpu.opcode])
+        #print(f"{hex(cpu.pc)} {hex(cpu.opcode)} {cpu.lookup[cpu.opcode].name}\tA:{hex(cpu.a)} X:{hex(cpu.x)} Y:{hex(cpu.y)} SP:{hex(cpu.stkp)}")
         while not cpu.complete():
             cpu.clock()
-        # if count == 43: break
         print()
