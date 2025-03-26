@@ -272,7 +272,7 @@ class CPU_6502(object):
     def adc(self) -> uint8:
         # add with carry
         self.fetch()
-        temp: uint16 = uint16(self.a + self.fetched + self.get_flag(FLAGS.C))
+        temp: uint16 = uint16(self.a) + uint16(self.fetched) + uint16(self.get_flag(FLAGS.C))
         # check if carry
         self.set_flag(FLAGS.C, temp > 255)
         # check if result is zero
@@ -280,7 +280,8 @@ class CPU_6502(object):
         # check if negative
         self.set_flag(FLAGS.N, temp & 0x80)
         # check if overflow
-        self.set_flag(FLAGS.V, (~(self.a ^ self.fetched) and (self.a ^ temp)) & 0x0080)
+        self.set_flag(FLAGS.V, (~(uint16(self.a) ^ uint16(self.fetched))) & (uint16(self.a) ^ uint16(temp)) & 0x0080)
+        #self.set_flag(FLAGS.V, (~(self.a ^ self.fetched) and (self.a ^ temp)) & 0x0080)
         # store the result
         self.a = temp & 0x00FF
         # could require an additional cycle
@@ -320,6 +321,11 @@ class CPU_6502(object):
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
+        for i, flag in enumerate(FLAGS):
+            print(flag)
+            print(self.status & flag)
+        print("PC: ", hex(self.pc))
+        if hex(self.pc) == "0xf939": exit(1)
         return 0
     def bcs(self) -> uint8: 
         # branch if carry bit is set
@@ -344,10 +350,11 @@ class CPU_6502(object):
     def bit(self) -> uint8: 
         # modifies flags, but does not change memory or registers
         self.fetch()
+        tmp = uint16(self.a & self.fetched)
         # The zero flag is set depending on the result of the accumulator AND memory value
-        self.set_flag(FLAGS.Z, uint8(self.a & self.fetched) == 0x00)
-        self.set_flag(FLAGS.V, self.fetched & (1 << 6))
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x00)
         self.set_flag(FLAGS.N, self.fetched & (1 << 7))
+        self.set_flag(FLAGS.V, self.fetched & (1 << 6))
         return 0
     def bmi(self) -> uint8: 
         # branch if negative
@@ -404,7 +411,7 @@ class CPU_6502(object):
         return 0
         
     def bvc(self) -> uint8: 
-        # branch if overflow
+        # branch if overflow is clear
         if self.get_flag(FLAGS.V) == 0x00:
             self.cycles += 1
             self.addr_abs = self.pc + self.addr_rel
@@ -414,7 +421,8 @@ class CPU_6502(object):
             self.pc = self.addr_abs
         return 0
     def bvs(self) -> uint8:
-        # branch if not overflow
+        # branch if overflow
+        # TODO: remove 0xc972 | 0xc784
         if self.get_flag(FLAGS.V) == 0x01:
             self.cycles += 1
             self.addr_abs = self.pc + self.addr_rel
@@ -422,6 +430,11 @@ class CPU_6502(object):
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
+        print("V flag:", type(self.get_flag(FLAGS.V)))
+        for i, flag in enumerate(FLAGS):
+            print(flag)
+            print(self.status & flag)
+        if hex(self.pc) == '0xc977': exit(1) # TODO: remove
         return 0
     def clc(self) -> uint8:
         # clear carry bit
@@ -445,8 +458,25 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
         self.set_flag(FLAGS.N, tmp & 0x0080)
         return 1
-    def cpx(self) -> uint8: ...
-    def cpy(self) -> uint8: ...
+    def cpx(self) -> uint8:
+        # compares X to a memory value
+        # comparison is implemented as a subtraction
+        self.fetch()
+        tmp = uint16(self.x) - uint16(self.fetched)
+        self.set_flag(FLAGS.C, self.x >= self.fetched)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 0
+
+    def cpy(self) -> uint8: 
+        # compares Y to a memory value
+        # comparison is implemented as a subtraction
+        self.fetch()
+        tmp = uint16(self.y) - uint16(self.fetched)
+        self.set_flag(FLAGS.C, self.y >= self.fetched)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 0
     def dec(self) -> uint8: ...
     def dex(self) -> uint8: ...
     def dey(self) -> uint8: 
@@ -459,7 +489,11 @@ class CPU_6502(object):
         return 0
     def eor(self) -> uint8:
         # exclusive-ORs a memory value and the accumulator
-        pass
+        self.fetch()
+        self.a = uint8(self.a ^ self.fetched)
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 1 
     def inc(self) -> uint8: ...
     def inx(self) -> uint8: ...
     def iny(self) -> uint8: ...
@@ -631,7 +665,8 @@ class CPU_6502(object):
         # check if negative
         self.set_flag(FLAGS.N, temp & 0x0080)
         # check if overflow
-        self.set_flag(FLAGS.V, ((self.a ^ temp) and (value ^ temp)) & 0x0080)
+        # SetFlag(V, (temp ^ (uint16_t)a) & (temp ^ value) & 0x0080)
+        self.set_flag(FLAGS.V, (temp ^ uint16(self.a)) & (temp ^ value) & 0x0080)
         # store the result
         self.a = temp & 0x00FF
         return 1
