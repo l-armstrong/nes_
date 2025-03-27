@@ -12,6 +12,7 @@ class Bus(object):
         # check_type(data, uint8)
         # check_type(addr, uint16)
         # guard ram
+        # TODO should be convert data to uint8?
         if (addr >= 0x0000 and addr <= 0xFFFF):
             self.ram[addr] = data
     

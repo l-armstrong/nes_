@@ -272,7 +272,7 @@ class CPU_6502(object):
     def adc(self) -> uint8:
         # add with carry
         self.fetch()
-        temp: uint16 = uint16(self.a + self.fetched + self.get_flag(FLAGS.C))
+        temp: uint16 = uint16(self.a) + uint16(self.fetched) + uint16(self.get_flag(FLAGS.C))
         # check if carry
         self.set_flag(FLAGS.C, temp > 255)
         # check if result is zero
@@ -280,7 +280,8 @@ class CPU_6502(object):
         # check if negative
         self.set_flag(FLAGS.N, temp & 0x80)
         # check if overflow
-        self.set_flag(FLAGS.V, (~(self.a ^ self.fetched) and (self.a ^ temp)) & 0x0080)
+        self.set_flag(FLAGS.V, (~(uint16(self.a) ^ uint16(self.fetched))) & (uint16(self.a) ^ uint16(temp)) & 0x0080)
+        #self.set_flag(FLAGS.V, (~(self.a ^ self.fetched) and (self.a ^ temp)) & 0x0080)
         # store the result
         self.a = temp & 0x00FF
         # could require an additional cycle
@@ -290,7 +291,7 @@ class CPU_6502(object):
         # fetch data
         self.fetch()
         # perform bitwise
-        self.a = self.a & self.fetched
+        self.a = uint8(self.a & self.fetched)
         # update status flags
         self.set_flag(FLAGS.Z, self.a == 0x00)
         self.set_flag(FLAGS.N, self.a & 0x80)
@@ -306,10 +307,11 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x00)
         self.set_flag(FLAGS.N, tmp & 0x80)
         # check if imp to handle case where we store in a reg
-        if self.lookup[self.opcode] is self.imp:
+        if self.lookup[self.opcode].addrmode == self.imp:
             self.a = uint8(tmp)
         else:
             self.write(self.addr_abs, uint8(tmp))
+        
         return 0
     def bcc(self) -> uint8: 
         # branch if carry bit is clear
@@ -320,6 +322,11 @@ class CPU_6502(object):
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
+        for i, flag in enumerate(FLAGS):
+            print(flag)
+            print(self.status & flag)
+        print("PC: ", hex(self.pc))
+        if hex(self.pc) == "0xf939": exit(1)
         return 0
     def bcs(self) -> uint8: 
         # branch if carry bit is set
@@ -344,10 +351,12 @@ class CPU_6502(object):
     def bit(self) -> uint8: 
         # modifies flags, but does not change memory or registers
         self.fetch()
+        # TODO: should cast both to uint16?
+        tmp = uint16(self.a & self.fetched)
         # The zero flag is set depending on the result of the accumulator AND memory value
-        self.set_flag(FLAGS.Z, uint8(self.a & self.fetched) == 0x00)
-        self.set_flag(FLAGS.V, self.fetched & (1 << 6))
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x00)
         self.set_flag(FLAGS.N, self.fetched & (1 << 7))
+        self.set_flag(FLAGS.V, self.fetched & (1 << 6))
         return 0
     def bmi(self) -> uint8: 
         # branch if negative
@@ -368,6 +377,11 @@ class CPU_6502(object):
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
+        for i, flag in enumerate(FLAGS):
+            print(flag)
+            print(self.status & flag)
+        print("PC: ", hex(self.pc))
+        if hex(self.pc) == "0xcf1c": exit(1)
         return 0
     def bpl(self) -> uint8: 
         # branch if positive
@@ -404,7 +418,7 @@ class CPU_6502(object):
         return 0
         
     def bvc(self) -> uint8: 
-        # branch if overflow
+        # branch if overflow is clear
         if self.get_flag(FLAGS.V) == 0x00:
             self.cycles += 1
             self.addr_abs = self.pc + self.addr_rel
@@ -414,7 +428,8 @@ class CPU_6502(object):
             self.pc = self.addr_abs
         return 0
     def bvs(self) -> uint8:
-        # branch if not overflow
+        # branch if overflow
+        # TODO: remove 0xc972 | 0xc784
         if self.get_flag(FLAGS.V) == 0x01:
             self.cycles += 1
             self.addr_abs = self.pc + self.addr_rel
@@ -422,6 +437,11 @@ class CPU_6502(object):
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
             self.pc = self.addr_abs
+        print("V flag:", type(self.get_flag(FLAGS.V)))
+        for i, flag in enumerate(FLAGS):
+            print(flag)
+            print(self.status & flag)
+        if hex(self.pc) == '0xc977': exit(1) # TODO: remove
         return 0
     def clc(self) -> uint8:
         # clear carry bit
@@ -445,10 +465,32 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
         self.set_flag(FLAGS.N, tmp & 0x0080)
         return 1
-    def cpx(self) -> uint8: ...
-    def cpy(self) -> uint8: ...
+    def cpx(self) -> uint8:
+        # compares X to a memory value
+        # comparison is implemented as a subtraction
+        self.fetch()
+        tmp = uint16(self.x) - uint16(self.fetched)
+        self.set_flag(FLAGS.C, self.x >= self.fetched)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 0
+
+    def cpy(self) -> uint8: 
+        # compares Y to a memory value
+        # comparison is implemented as a subtraction
+        self.fetch()
+        tmp = uint16(self.y) - uint16(self.fetched)
+        self.set_flag(FLAGS.C, self.y >= self.fetched)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 0
     def dec(self) -> uint8: ...
-    def dex(self) -> uint8: ...
+    def dex(self) -> uint8: 
+        # subtracts 1 from the X register.
+        self.x = uint8(self.x - 1)
+        self.set_flag(FLAGS.Z, self.x == 0x00)
+        self.set_flag(FLAGS.N, self.x & 0x80)
+        return 0
     def dey(self) -> uint8: 
         # decrement 1 from Y reg. Does not effect carry or overflow
         # decrement Y reg
@@ -459,10 +501,24 @@ class CPU_6502(object):
         return 0
     def eor(self) -> uint8:
         # exclusive-ORs a memory value and the accumulator
-        pass
+        self.fetch()
+        self.a = uint8(self.a ^ self.fetched)
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 1 
     def inc(self) -> uint8: ...
-    def inx(self) -> uint8: ...
-    def iny(self) -> uint8: ...
+    def inx(self) -> uint8: 
+        # INX adds 1 to the X register.
+        self.x = uint8(self.x + 1)
+        self.set_flag(FLAGS.Z, self.x == 0x00)
+        self.set_flag(FLAGS.N, self.x & 0x80)
+        return 0 
+    def iny(self) -> uint8: 
+        # INY adds 1 to the Y register
+        self.y = uint8(self.y + 1)
+        self.set_flag(FLAGS.Z, self.y == 0x00)
+        self.set_flag(FLAGS.N, self.y & 0x80)
+        return 0
     def jmp(self) -> uint8: 
         # sets the program counter to a new value, allowing code to execute from a new location.
         self.pc = self.addr_abs
@@ -516,15 +572,19 @@ class CPU_6502(object):
         # shift all bits one pos to the right 
         self.fetch()
         # bit 0 is shifted into the carry flag
-        self.set_flag(FLAGS.C, self.fetched & 0x01)
-        tmp = self.fetched >> 1
+        self.set_flag(FLAGS.C, self.fetched & 0x0001)
+        tmp = uint16(self.fetched >> 1)
         # set Zero Flag
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
         # set N Flag
         self.set_flag(FLAGS.N, tmp & 0x0080)
-        if self.lookup[self.opcode].addrmode is self.imp:
-            self.a = tmp & 0x00FF
+        print("DEBUG address mode:", self.lookup[self.opcode].addrmode is self.imp)
+        # if self.lookup[self.opcode].addrmode is self.imp:
+        if self.lookup[self.opcode].addrmode == self.imp:
+            print("IN A")
+            self.a = uint8(tmp & 0x00FF)
         else:
+            print("IN WRITE")
             self.write(self.addr_abs, tmp & 0x00FF)
         return 0
         
@@ -565,7 +625,7 @@ class CPU_6502(object):
         # pop off the stack into accum
         self.stkp += 1
         # read from bus value we need
-        self.a = self.read(0x0100 + self.stkp)
+        self.a = uint8(self.read(0x0100 + self.stkp))
         # update flags
         self.set_flag(FLAGS.Z, self.a == 0x00)
         self.set_flag(FLAGS.N, self.a & 0x80)
@@ -581,16 +641,27 @@ class CPU_6502(object):
         # shift memory value/acc to the left
         self.fetch()
         # the value in carry is shifted into bit 0
-        tmp = (uint16(self.fetched) << 1) | self.get_flag(FLAGS.C)
+        tmp = uint16((uint16(self.fetched) << 1) | self.get_flag(FLAGS.C))
         # update flags
         self.set_flag(FLAGS.C, tmp & 0xFF00)
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
         self.set_flag(FLAGS.N, tmp & 0x0080)
-        if self.lookup[self.opcode].addrmode is self.imp: self.a = tmp & 0x00FF
+        # if self.lookup[self.opcode].addrmode is self.imp: self.a = tmp & 0x00FF
+        # TODO: should we change this back to is?
+        if self.lookup[self.opcode].addrmode == self.imp: self.a = tmp & 0x00FF
         else: self.write(self.addr_abs, tmp & 0x00FF)
         return 0
 
-    def ror(self) -> uint8: ...
+    def ror(self) -> uint8: 
+        # shift memory value/acc to the right
+        self.fetch()
+        tmp = uint16(uint16(self.get_flag(FLAGS.C) << 7) | (self.fetched >> 1))
+        self.set_flag(FLAGS.C, self.fetched & 0x01)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x00)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        if self.lookup[self.opcode].addrmode == self.imp: self.a = tmp & 0x00FF
+        else: self.write(self.addr_abs, tmp & 0x00FF)
+        return 0
     def rti(self) -> uint8: 
         # return from interrupt
         self.stkp += 1
@@ -623,15 +694,16 @@ class CPU_6502(object):
         # invert the bits of the data
         value: uint16 = uint16(self.fetched) ^ 0x00FF
 
-        temp: uint16 = uint16(self.a + value + self.get_flag(FLAGS.C))
+        temp: uint16 = uint16(self.a) + uint16(value) + uint16(self.get_flag(FLAGS.C))
         # check if carry
         self.set_flag(FLAGS.C, temp & 0xFF00)
         # check if result is zero
-        self.set_flag(FLAGS.Z, (temp & 0x00FF == 0))
+        self.set_flag(FLAGS.Z, (temp & 0x00FF) == 0)
         # check if negative
         self.set_flag(FLAGS.N, temp & 0x0080)
         # check if overflow
-        self.set_flag(FLAGS.V, ((self.a ^ temp) and (value ^ temp)) & 0x0080)
+        # SetFlag(V, (temp ^ (uint16_t)a) & (temp ^ value) & 0x0080)
+        self.set_flag(FLAGS.V, (temp ^ uint16(self.a)) & (temp ^ value) & 0x0080)
         # store the result
         self.a = temp & 0x00FF
         return 1
@@ -661,15 +733,40 @@ class CPU_6502(object):
         self.write(self.addr_abs, self.x)
         return 0
     def sty(self) -> uint8: ...
-    def tax(self) -> uint8: ...
-    def tay(self) -> uint8: ...
-    def tsx(self) -> uint8: ...
-    def txa(self) -> uint8: ...
+    def tax(self) -> uint8: 
+        # copies the accumulator value to the X register
+        self.x = uint8(self.a)
+        self.set_flag(FLAGS.Z, self.x == 0x00)
+        self.set_flag(FLAGS.N, self.x & 0x80)
+        return 0
+    def tay(self) -> uint8: 
+        # copies the accumulator value to the Y register
+        self.y = uint8(self.a)
+        self.set_flag(FLAGS.Z, self.y == 0x00)
+        self.set_flag(FLAGS.N, self.y & 0x80)
+        return 0
+    def tsx(self) -> uint8: 
+        # copies the stack pointer value to the X register.
+        self.x = uint8(self.stkp)
+        self.set_flag(FLAGS.Z, self.x == 0x00)
+        self.set_flag(FLAGS.N, self.x & 0x80)
+        return 0
+    def txa(self) -> uint8: 
+        # copies the X register value to the accumulator
+        self.a = uint8(self.x)
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 0
     def txs(self) -> uint8: 
         # TXS copies the X register value to the stack pointer.
         self.stkp = self.x
         return 0
-    def tya(self) -> uint8: ...
+    def tya(self) -> uint8: 
+        # copies the Y register value to the accumulator
+        self.a = uint8(self.y)
+        self.set_flag(FLAGS.Z, self.a == 0x00)
+        self.set_flag(FLAGS.N, self.a & 0x80)
+        return 0
 
     def xxx(self) -> uint8: return 0 # illegal opcode
 
