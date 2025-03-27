@@ -550,7 +550,7 @@ class CPU_6502(object):
         # shift all bits one pos to the right 
         self.fetch()
         # bit 0 is shifted into the carry flag
-        self.set_flag(FLAGS.C, self.fetched & 0x01)
+        self.set_flag(FLAGS.C, self.fetched & 0x0001)
         tmp = self.fetched >> 1
         # set Zero Flag
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
@@ -615,7 +615,7 @@ class CPU_6502(object):
         # shift memory value/acc to the left
         self.fetch()
         # the value in carry is shifted into bit 0
-        tmp = (uint16(self.fetched) << 1) | self.get_flag(FLAGS.C)
+        tmp = uint16((uint16(self.fetched) << 1) | self.get_flag(FLAGS.C))
         # update flags
         self.set_flag(FLAGS.C, tmp & 0xFF00)
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
@@ -657,7 +657,7 @@ class CPU_6502(object):
         # invert the bits of the data
         value: uint16 = uint16(self.fetched) ^ 0x00FF
 
-        temp: uint16 = uint16(self.a + value + self.get_flag(FLAGS.C))
+        temp: uint16 = uint16(self.a) + uint16(value) + uint16(self.get_flag(FLAGS.C))
         # check if carry
         self.set_flag(FLAGS.C, temp & 0xFF00)
         # check if result is zero
