@@ -484,7 +484,14 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
         self.set_flag(FLAGS.N, tmp & 0x0080)
         return 0
-    def dec(self) -> uint8: ...
+    def dec(self) -> uint8: 
+        # subtracts 1 from a memory location
+        self.fetch()
+        tmp = uint16(self.fetched - 1)
+        self.write(self.addr_abs, tmp & 0x00FF)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 0
     def dex(self) -> uint8: 
         # subtracts 1 from the X register.
         self.x = uint8(self.x - 1)
@@ -506,7 +513,14 @@ class CPU_6502(object):
         self.set_flag(FLAGS.Z, self.a == 0x00)
         self.set_flag(FLAGS.N, self.a & 0x80)
         return 1 
-    def inc(self) -> uint8: ...
+    def inc(self) -> uint8: 
+        # adds 1 to a memory location
+        self.fetch()
+        tmp = uint16(self.fetched + 1)
+        self.write(self.addr_abs, tmp & 0x00FF)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        return 0
     def inx(self) -> uint8: 
         # INX adds 1 to the X register.
         self.x = uint8(self.x + 1)
@@ -732,7 +746,10 @@ class CPU_6502(object):
         # write
         self.write(self.addr_abs, self.x)
         return 0
-    def sty(self) -> uint8: ...
+    def sty(self) -> uint8: 
+        # stores the Y register value into memory
+        self.write(self.addr_abs, self.y)
+        return 0
     def tax(self) -> uint8: 
         # copies the accumulator value to the X register
         self.x = uint8(self.a)
