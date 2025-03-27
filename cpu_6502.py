@@ -308,10 +308,8 @@ class CPU_6502(object):
         self.set_flag(FLAGS.N, tmp & 0x80)
         # check if imp to handle case where we store in a reg
         if self.lookup[self.opcode].addrmode == self.imp:
-            print("IN A")
             self.a = uint8(tmp)
         else:
-            print("IN WRITE")
             self.write(self.addr_abs, uint8(tmp))
         
         return 0
@@ -648,11 +646,22 @@ class CPU_6502(object):
         self.set_flag(FLAGS.C, tmp & 0xFF00)
         self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x0000)
         self.set_flag(FLAGS.N, tmp & 0x0080)
-        if self.lookup[self.opcode].addrmode is self.imp: self.a = tmp & 0x00FF
+        # if self.lookup[self.opcode].addrmode is self.imp: self.a = tmp & 0x00FF
+        # TODO: should we change this back to is?
+        if self.lookup[self.opcode].addrmode == self.imp: self.a = tmp & 0x00FF
         else: self.write(self.addr_abs, tmp & 0x00FF)
         return 0
 
-    def ror(self) -> uint8: ...
+    def ror(self) -> uint8: 
+        # shift memory value/acc to the right
+        self.fetch()
+        tmp = uint16(uint16(self.get_flag(FLAGS.C) << 7) | (self.fetched >> 1))
+        self.set_flag(FLAGS.C, self.fetched & 0x01)
+        self.set_flag(FLAGS.Z, (tmp & 0x00FF) == 0x00)
+        self.set_flag(FLAGS.N, tmp & 0x0080)
+        if self.lookup[self.opcode].addrmode == self.imp: self.a = tmp & 0x00FF
+        else: self.write(self.addr_abs, tmp & 0x00FF)
+        return 0
     def rti(self) -> uint8: 
         # return from interrupt
         self.stkp += 1
