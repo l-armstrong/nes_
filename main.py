@@ -48,3 +48,7 @@ if __name__ == '__main__':
         while not cpu.complete():
             cpu.clock()
         print()
+        if hex(cpu.pc) == "0xc5f4": 
+            print(bus.ram[0x02])
+            print(bus.ram[0x03])
+            exit(1)
